@@ -1,6 +1,7 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include "board_config.h"
+#include <WebServer.h>
 
 // ===========================
 // Select camera model in board_config.h
@@ -17,7 +18,45 @@
 const char *ssid = "GRIYAPORI";
 const char *password = "";
 
-// void startCameraServer();
+WebServer server(80);
+
+void handle_jpg_stream(void) {
+  WiFiClient client = server.client();
+
+  String response = "HTTP/1.1 200 OK\r\n";
+  response += "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n\r\n";
+  server.sendContent(response);
+
+  while (true) {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) {
+      Serial.println("Camera capture failed");
+      return;
+    }
+
+    response = "--frame\r\n";
+    response += "Content-Type: image/jpeg\r\n\r\n";
+    server.sendContent(response);
+
+    client.write(fb->buf, fb->len);
+    server.sendContent("\r\n");
+
+    esp_camera_fb_return(fb);
+
+    if (!client.connected()) break;
+  }
+};
+
+void startCameraServer(){
+  server.on("/", HTTP_GET, []() {
+    server.send(200, "text/html", "<html><body><h1>ESP32-CAM</h1><img src=\"/stream\"/></body></html>");
+  });
+
+  server.on("/stream", HTTP_GET, handle_jpg_stream);
+
+  server.begin();
+  Serial.println("Camera server started");
+};
 void setupLedFlash();
 
 void setup() {
@@ -50,18 +89,18 @@ void setup() {
   // config.pixel_format = PIXFORMAT_RGB565; // for face detection/recognition
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;
+  config.jpeg_quality = 10;
   config.fb_count = 1;
 
   // if PSRAM IC present, init with UXGA resolution and higher JPEG quality
   //                      for larger pre-allocated frame buffer.
   if (psramFound()) {
-    config.jpeg_quality = 10;
+    config.jpeg_quality = 12;
     config.fb_count = 2;
     config.grab_mode = CAMERA_GRAB_LATEST;
   } else {
     // Limit the frame size when PSRAM is not available
-    config.frame_size = FRAMESIZE_SVGA;
+    config.frame_size = FRAMESIZE_XGA;
     config.fb_location = CAMERA_FB_IN_DRAM;
   }
   // if (config.pixel_format == PIXFORMAT_JPEG) {
@@ -94,7 +133,7 @@ void setup() {
   }
   // drop down frame size for higher initial frame rate
   if (config.pixel_format == PIXFORMAT_JPEG) {
-    s->set_framesize(s, FRAMESIZE_QVGA);
+    s->set_framesize(s, FRAMESIZE_XGA);
   }
 
   #if defined(CAMERA_MODEL_M5STACK_WIDE) || defined(CAMERA_MODEL_M5STACK_ESP32CAM)
@@ -122,11 +161,33 @@ void setup() {
   Serial.println("");
   Serial.println("WiFi connected");
 
-  // startCameraServer();
+  // Resolution Code
+  // "QQVGA (160x120)"
+  // "QVGA (320x240)"
+  // "CIF (352x288)"
+  // "VGA (640x480)"
+  // "SVGA (800x600)"
+  // "XGA (1024x768)"
+  // "SXGA (1280x1024)"
+  // "UXGA (1600x1200)"
+
+  Serial.print("Resolution: ");
+  Serial.println(s->status.framesize);
+
+  Serial.print("JPEG Quality: ");
+  Serial.println(s->status.quality);
+
+  // Serial.print("Pixel Format: ");
+  // Serial.println(s->status.pixel_format);
+
+
+  startCameraServer();
 
   Serial.print("Camera Ready! Use 'http://");
   Serial.print(WiFi.localIP());
   Serial.println("' to connect");
 }
 
-void loop() {}
+void loop() {
+  server.handleClient();
+}
